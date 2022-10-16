@@ -49,6 +49,8 @@ testoutput
 *.swp
 /pkg/backtest/assets.go
 
+/amker
+/pinescript
 coverage.txt
 coverage_dum.txt
 

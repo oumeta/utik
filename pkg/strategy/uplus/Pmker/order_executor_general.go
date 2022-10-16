@@ -1,9 +1,10 @@
-package bbgo
+package pmker
 
 import (
 	"context"
 	"errors"
 	"fmt"
+	. "github.com/c9s/bbgo/pkg/bbgo"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -16,7 +17,7 @@ import (
 	"github.com/c9s/bbgo/pkg/util"
 )
 
-var ErrExceededSubmitOrderRetryLimit = errors.New("exceeded submit order retry limit")
+//var ErrExceededSubmitOrderRetryLimit = errors.New("exceeded submit order retry limit")
 
 // quantityReduceDelta is used to modify the order to submit, especially for the market order
 var quantityReduceDelta = fixedpoint.NewFromFloat(0.005)
@@ -25,8 +26,8 @@ var quantityReduceDelta = fixedpoint.NewFromFloat(0.005)
 // This is for the maximum retries
 const submitOrderRetryLimit = 5
 
-// GeneralOrderExecutor implements the general order executor for strategy
-type GeneralOrderExecutor struct {
+// Pmkoo implements the general order executor for strategy
+type Pmkoo struct {
 	session            *ExchangeSession
 	symbol             string
 	strategy           string
@@ -41,14 +42,14 @@ type GeneralOrderExecutor struct {
 	closing int64
 }
 
-func NewGeneralOrderExecutor(session *ExchangeSession, symbol, strategy, strategyInstanceID string, position *types.Position) *GeneralOrderExecutor {
+func NewPmkoo(session *ExchangeSession, symbol, strategy, strategyInstanceID string, position *types.Position) *Pmkoo {
 	// Always update the position fields
 	position.Strategy = strategy
 	position.StrategyInstanceID = strategyInstanceID
 
 	orderStore := NewOrderStore(symbol)
 
-	executor := &GeneralOrderExecutor{
+	executor := &Pmkoo{
 		session:            session,
 		symbol:             symbol,
 		strategy:           strategy,
@@ -66,7 +67,7 @@ func NewGeneralOrderExecutor(session *ExchangeSession, symbol, strategy, strateg
 	return executor
 }
 
-func (e *GeneralOrderExecutor) startMarginAssetUpdater(ctx context.Context) {
+func (e *Pmkoo) startMarginAssetUpdater(ctx context.Context) {
 	marginService, ok := e.session.Exchange.(types.MarginBorrowRepayService)
 	if !ok {
 		log.Warnf("session %s (%T) exchange does not support MarginBorrowRepayService", e.session.Name, e.session.Exchange)
@@ -76,7 +77,7 @@ func (e *GeneralOrderExecutor) startMarginAssetUpdater(ctx context.Context) {
 	go e.marginAssetMaxBorrowableUpdater(ctx, 30*time.Minute, marginService, e.position.Market)
 }
 
-func (e *GeneralOrderExecutor) updateMarginAssetMaxBorrowable(ctx context.Context, marginService types.MarginBorrowRepayService, market types.Market) {
+func (e *Pmkoo) updateMarginAssetMaxBorrowable(ctx context.Context, marginService types.MarginBorrowRepayService, market types.Market) {
 	maxBorrowable, err := marginService.QueryMarginAssetMaxBorrowable(ctx, market.BaseCurrency)
 	if err != nil {
 		log.WithError(err).Errorf("can not query margin base asset %s max borrowable", market.BaseCurrency)
@@ -94,7 +95,7 @@ func (e *GeneralOrderExecutor) updateMarginAssetMaxBorrowable(ctx context.Contex
 	}
 }
 
-func (e *GeneralOrderExecutor) marginAssetMaxBorrowableUpdater(ctx context.Context, interval time.Duration, marginService types.MarginBorrowRepayService, market types.Market) {
+func (e *Pmkoo) marginAssetMaxBorrowableUpdater(ctx context.Context, interval time.Duration, marginService types.MarginBorrowRepayService, market types.Market) {
 	t := time.NewTicker(util.MillisecondsJitter(interval, 500))
 	defer t.Stop()
 
@@ -110,17 +111,17 @@ func (e *GeneralOrderExecutor) marginAssetMaxBorrowableUpdater(ctx context.Conte
 	}
 }
 
-func (e *GeneralOrderExecutor) ActiveMakerOrders() *ActiveOrderBook {
+func (e *Pmkoo) ActiveMakerOrders() *ActiveOrderBook {
 	return e.activeMakerOrders
 }
 
-func (e *GeneralOrderExecutor) BindEnvironment(environ *Environment) {
+func (e *Pmkoo) BindEnvironment(environ *Environment) {
 	e.tradeCollector.OnProfit(func(trade types.Trade, profit *types.Profit) {
 		environ.RecordPosition(e.position, trade, profit)
 	})
 }
 
-func (e *GeneralOrderExecutor) BindTradeStats(tradeStats *types.TradeStats) {
+func (e *Pmkoo) BindTradeStats(tradeStats *types.TradeStats) {
 	e.tradeCollector.OnProfit(func(trade types.Trade, profit *types.Profit) {
 		if profit == nil {
 			return
@@ -130,7 +131,7 @@ func (e *GeneralOrderExecutor) BindTradeStats(tradeStats *types.TradeStats) {
 	})
 }
 
-func (e *GeneralOrderExecutor) BindProfitStats(profitStats *types.ProfitStats) {
+func (e *Pmkoo) BindProfitStats(profitStats *types.ProfitStats) {
 	e.tradeCollector.OnProfit(func(trade types.Trade, profit *types.Profit) {
 		profitStats.AddTrade(trade)
 		if profit == nil {
@@ -144,7 +145,7 @@ func (e *GeneralOrderExecutor) BindProfitStats(profitStats *types.ProfitStats) {
 	})
 }
 
-func (e *GeneralOrderExecutor) Bind() {
+func (e *Pmkoo) Bind() {
 	e.activeMakerOrders.BindStream(e.session.UserDataStream)
 	e.orderStore.BindStream(e.session.UserDataStream)
 
@@ -162,7 +163,7 @@ func (e *GeneralOrderExecutor) Bind() {
 }
 
 // CancelOrders cancels the given order objects directly
-func (e *GeneralOrderExecutor) CancelOrders(ctx context.Context, orders ...types.Order) error {
+func (e *Pmkoo) CancelOrders(ctx context.Context, orders ...types.Order) error {
 	err := e.session.Exchange.CancelOrders(ctx, orders...)
 	if err != nil { // Retry once
 		err = e.session.Exchange.CancelOrders(ctx, orders...)
@@ -170,15 +171,15 @@ func (e *GeneralOrderExecutor) CancelOrders(ctx context.Context, orders ...types
 	return err
 }
 
-func (e *GeneralOrderExecutor) SubmitOrders(ctx context.Context, submitOrders ...types.SubmitOrder) (types.OrderSlice, error) {
+func (e *Pmkoo) SubmitOrders(ctx context.Context, submitOrders ...types.SubmitOrder) (types.OrderSlice, error) {
 	formattedOrders, err := e.session.FormatOrders(submitOrders)
 	if err != nil {
 		return nil, err
 	}
 
-	createdOrders, errIdx, err := BatchPlaceOrder(ctx, e.session.Exchange, formattedOrders...)
+	createdOrders, errIdx, err := BatchPlace(ctx, e.session.Exchange, formattedOrders...)
 	if len(errIdx) > 0 {
-		createdOrders2, err2 := BatchRetryPlaceOrder(ctx, e.session.Exchange, errIdx, formattedOrders...)
+		createdOrders2, err2 := BatchRetryPlace(ctx, e.session.Exchange, errIdx, formattedOrders...)
 		if err2 != nil {
 			err = multierr.Append(err, err2)
 		} else {
@@ -192,7 +193,7 @@ func (e *GeneralOrderExecutor) SubmitOrders(ctx context.Context, submitOrders ..
 	return createdOrders, err
 }
 
-type OpenPositionOptions struct {
+type PmkerOptions struct {
 	// Long is for open a long position
 	// Long or Short must be set, avoid loading it from the config file
 	// it should be set from the strategy code
@@ -224,9 +225,11 @@ type OpenPositionOptions struct {
 
 	Price fixedpoint.Value `json:"-" yaml:"-"`
 	Tags  []string         `json:"-" yaml:"-"`
+
+	Params map[string]interface{} `json:"params"`
 }
 
-func (e *GeneralOrderExecutor) reduceQuantityAndSubmitOrder(ctx context.Context, price fixedpoint.Value, submitOrder types.SubmitOrder) (types.OrderSlice, error) {
+func (e *Pmkoo) reduceQuantityAndSubmitOrder(ctx context.Context, price fixedpoint.Value, submitOrder types.SubmitOrder) (types.OrderSlice, error) {
 	var err error
 	for i := 0; i < submitOrderRetryLimit; i++ {
 		q := submitOrder.Quantity.Mul(fixedpoint.One.Sub(quantityReduceDelta))
@@ -260,13 +263,14 @@ func (e *GeneralOrderExecutor) reduceQuantityAndSubmitOrder(ctx context.Context,
 	return nil, multierr.Append(ErrExceededSubmitOrderRetryLimit, err)
 }
 
-func (e *GeneralOrderExecutor) OpenPosition(ctx context.Context, options OpenPositionOptions) (types.OrderSlice, error) {
+func (e *Pmkoo) OpenPosition(ctx context.Context, options PmkerOptions) (types.OrderSlice, error) {
 	price := options.Price
 	submitOrder := types.SubmitOrder{
 		Symbol:           e.position.Symbol,
 		Type:             types.OrderTypeMarket,
 		MarginSideEffect: types.SideEffectTypeMarginBuy,
 		Tag:              strings.Join(options.Tags, ","),
+		Params:           options.Params,
 	}
 
 	baseBalance, _ := e.session.GetAccount().Balance(e.position.Market.BaseCurrency)
@@ -276,7 +280,7 @@ func (e *GeneralOrderExecutor) OpenPosition(ctx context.Context, options OpenPos
 
 	if !options.LimitOrderTakerRatio.IsZero() {
 		if options.Price.IsZero() {
-			return nil, fmt.Errorf("OpenPositionOptions.Price is zero, can not adjust limit taker order price, options given: %+v", options)
+			return nil, fmt.Errorf("PmkerOptions.Price is zero, can not adjust limit taker order price, options given: %+v", options)
 		}
 
 		if options.Long {
@@ -357,7 +361,7 @@ func (e *GeneralOrderExecutor) OpenPosition(ctx context.Context, options OpenPos
 }
 
 // GracefulCancelActiveOrderBook cancels the orders from the active orderbook.
-func (e *GeneralOrderExecutor) GracefulCancelActiveOrderBook(ctx context.Context, activeOrders *ActiveOrderBook) error {
+func (e *Pmkoo) GracefulCancelActiveOrderBook(ctx context.Context, activeOrders *ActiveOrderBook) error {
 	if activeOrders.NumOfOrders() == 0 {
 		return nil
 	}
@@ -372,7 +376,7 @@ func (e *GeneralOrderExecutor) GracefulCancelActiveOrderBook(ctx context.Context
 	return nil
 }
 
-func (e *GeneralOrderExecutor) GracefulCancelOrder(ctx context.Context, order types.Order) error {
+func (e *Pmkoo) GracefulCancelOrder(ctx context.Context, order types.Order) error {
 	if e.activeMakerOrders.NumOfOrders() == 0 {
 		return nil
 	}
@@ -387,14 +391,14 @@ func (e *GeneralOrderExecutor) GracefulCancelOrder(ctx context.Context, order ty
 }
 
 // GracefulCancel cancels all active maker orders
-func (e *GeneralOrderExecutor) GracefulCancel(ctx context.Context) error {
+func (e *Pmkoo) GracefulCancel(ctx context.Context) error {
 	return e.GracefulCancelActiveOrderBook(ctx, e.activeMakerOrders)
 }
 
 // ClosePosition closes the current position by a percentage.
 // percentage 0.1 means close 10% position
 // tag is the order tag you want to attach, you may pass multiple tags, the tags will be combined into one tag string by commas.
-func (e *GeneralOrderExecutor) ClosePosition(ctx context.Context, percentage fixedpoint.Value, tags ...string) error {
+func (e *Pmkoo) ClosePosition(ctx context.Context, percentage fixedpoint.Value, tags ...string) error {
 	submitOrder := e.position.NewMarketCloseOrder(percentage)
 	if submitOrder == nil {
 		return nil
@@ -408,39 +412,22 @@ func (e *GeneralOrderExecutor) ClosePosition(ctx context.Context, percentage fix
 	atomic.AddInt64(&e.closing, 1)
 	defer atomic.StoreInt64(&e.closing, 0)
 
-	if e.session.Futures { // Futures: Use base qty in e.position
-		submitOrder.Quantity = e.position.GetBase().Abs()
-		submitOrder.ReduceOnly = true
-		if e.position.IsLong() {
-			submitOrder.Side = types.SideTypeSell
-		} else if e.position.IsShort() {
-			submitOrder.Side = types.SideTypeBuy
-		} else {
-			submitOrder.Side = types.SideTypeSelf
-			submitOrder.Quantity = fixedpoint.Zero
+	// check base balance and adjust the close position order
+	if e.position.IsLong() {
+		if baseBalance, ok := e.session.Account.Balance(e.position.Market.BaseCurrency); ok {
+			submitOrder.Quantity = fixedpoint.Min(submitOrder.Quantity, baseBalance.Available)
 		}
-
 		if submitOrder.Quantity.IsZero() {
-			return fmt.Errorf("no position to close: %+v", submitOrder)
+			return fmt.Errorf("insufficient base balance, can not sell: %+v", submitOrder)
 		}
-	} else { // Spot and spot margin
-		// check base balance and adjust the close position order
-		if e.position.IsLong() {
-			if baseBalance, ok := e.session.Account.Balance(e.position.Market.BaseCurrency); ok {
-				submitOrder.Quantity = fixedpoint.Min(submitOrder.Quantity, baseBalance.Available)
+	} else if e.position.IsShort() {
+		// TODO: check quote balance here, we also need the current price to validate, need to design.
+		/*
+			if quoteBalance, ok := e.session.Account.Balance(e.position.Market.QuoteCurrency); ok {
+				// AdjustQuantityByMaxAmount(submitOrder.Quantity, quoteBalance.Available)
+				// submitOrder.Quantity = fixedpoint.Min(submitOrder.Quantity,)
 			}
-			if submitOrder.Quantity.IsZero() {
-				return fmt.Errorf("insufficient base balance, can not sell: %+v", submitOrder)
-			}
-		} else if e.position.IsShort() {
-			// TODO: check quote balance here, we also need the current price to validate, need to design.
-			/*
-				if quoteBalance, ok := e.session.Account.Balance(e.position.Market.QuoteCurrency); ok {
-					// AdjustQuantityByMaxAmount(submitOrder.Quantity, quoteBalance.Available)
-					// submitOrder.Quantity = fixedpoint.Min(submitOrder.Quantity,)
-				}
-			*/
-		}
+		*/
 	}
 
 	tagStr := strings.Join(tags, ",")
@@ -452,25 +439,25 @@ func (e *GeneralOrderExecutor) ClosePosition(ctx context.Context, percentage fix
 	return err
 }
 
-func (e *GeneralOrderExecutor) TradeCollector() *TradeCollector {
+func (e *Pmkoo) TradeCollector() *TradeCollector {
 	return e.tradeCollector
 }
 
-func (e *GeneralOrderExecutor) Session() *ExchangeSession {
+func (e *Pmkoo) Session() *ExchangeSession {
 	return e.session
 }
 
-func (e *GeneralOrderExecutor) Position() *types.Position {
+func (e *Pmkoo) Position() *types.Position {
 	return e.position
 }
 
 // This implements PositionReader interface
-func (e *GeneralOrderExecutor) CurrentPosition() *types.Position {
+func (e *Pmkoo) CurrentPosition() *types.Position {
 	return e.position
 }
 
 // This implements PositionResetter interface
-func (e *GeneralOrderExecutor) ResetPosition() error {
+func (e *Pmkoo) ResetPosition() error {
 	e.position.Reset()
 	return nil
 }

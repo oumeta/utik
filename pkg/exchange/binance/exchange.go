@@ -1045,8 +1045,23 @@ func (e *Exchange) submitFuturesOrder(ctx context.Context, order types.SubmitOrd
 	req := e.futuresClient.NewCreateOrderService().
 		Symbol(order.Symbol).
 		Type(orderType).
-		Side(futures.SideType(order.Side)).
-		ReduceOnly(order.ReduceOnly)
+		Side(futures.SideType(order.Side))
+
+	switch order.Side {
+	case types.SideTypeBuy:
+		if order.ReduceOnly {
+			req.PositionSide(futures.PositionSideTypeShort)
+		} else {
+			req.PositionSide(futures.PositionSideTypeLong)
+		}
+	case types.SideTypeSell:
+		if order.ReduceOnly {
+			req.PositionSide(futures.PositionSideTypeLong)
+		} else {
+			req.PositionSide(futures.PositionSideTypeShort)
+		}
+
+	}
 
 	clientOrderID := newFuturesClientOrderID(order.ClientOrderID)
 	if len(clientOrderID) > 0 {
@@ -1065,7 +1080,7 @@ func (e *Exchange) submitFuturesOrder(ctx context.Context, order types.SubmitOrd
 
 	// set price field for limit orders
 	switch order.Type {
-	case types.OrderTypeStopLimit, types.OrderTypeLimit, types.OrderTypeLimitMaker:
+	case types.OrderTypeLimit, types.OrderTypeLimitMaker, types.OrderTypeStopLimit, types.OrderTypeTakeProfitLimit:
 		if order.Market.Symbol != "" {
 			req.Price(order.Market.FormatPrice(order.Price))
 		} else {
@@ -1077,7 +1092,7 @@ func (e *Exchange) submitFuturesOrder(ctx context.Context, order types.SubmitOrd
 	// set stop price
 	switch order.Type {
 
-	case types.OrderTypeStopLimit, types.OrderTypeStopMarket:
+	case types.OrderTypeTakeProfitLimit, types.OrderTypeTakeProfitMarket, types.OrderTypeStopLimit, types.OrderTypeStopMarket:
 		if order.Market.Symbol != "" {
 			req.StopPrice(order.Market.FormatPrice(order.StopPrice))
 		} else {
@@ -1085,14 +1100,13 @@ func (e *Exchange) submitFuturesOrder(ctx context.Context, order types.SubmitOrd
 			req.StopPrice(order.StopPrice.FormatString(8))
 		}
 	}
-
-	// could be IOC or FOK
-	if len(order.TimeInForce) > 0 {
-		// TODO: check the TimeInForce value
-		req.TimeInForce(futures.TimeInForceType(order.TimeInForce))
-	} else {
-		switch order.Type {
-		case types.OrderTypeLimit, types.OrderTypeLimitMaker, types.OrderTypeStopLimit:
+	switch order.Type {
+	case types.OrderTypeLimit, types.OrderTypeLimitMaker, types.OrderTypeTakeProfitLimit, types.OrderTypeStopLimit:
+		// could be IOC or FOK
+		if len(order.TimeInForce) > 0 {
+			// TODO: check the TimeInForce value
+			req.TimeInForce(futures.TimeInForceType(order.TimeInForce))
+		} else {
 			req.TimeInForce(futures.TimeInForceTypeGTC)
 		}
 	}
